@@ -53,6 +53,33 @@ function readConfigPort(): string {
 }
 
 /**
+ * Resolve a Claude Code OAuth token for the SDK's own client login gate.
+ *
+ * In onegate mode OneGate overwrites the real upstream Authorization header, so
+ * this value is NOT the credential that talks to Anthropic — it only has to be
+ * present and valid-format so the Claude Code SDK will proceed past its local
+ * login check and actually issue POST /v1/messages. Without it the SDK stops at
+ * a GET /v1/models probe and never calls the model (the exact failure we hit).
+ *
+ * Sourced the same way direct mode resolves credentials: host env first, then
+ * the Mac's Claude Code credential store. Returns undefined (never throws) if
+ * neither is present; the caller decides what to do. Value is never logged.
+ */
+function resolveClaudeGateToken(): { token: string; source: string } | undefined {
+  const envTok = process.env['CLAUDE_CODE_OAUTH_TOKEN'];
+  if (envTok && envTok.trim()) return { token: envTok.trim(), source: 'host-env' };
+  try {
+    const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
+    const j = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+    const tok: string | undefined = j?.claudeAiOauth?.accessToken;
+    if (tok && tok.trim()) return { token: tok.trim(), source: 'claude-credentials' };
+  } catch {
+    /* no credential store — fall through */
+  }
+  return undefined;
+}
+
+/**
  * Append OneGate proxy env + CA mount to `args`. Throws if the token or CA is
  * missing so we never silently spawn without credentials (parity with the
  * OneCLI path's hard-fail). The agent token is never logged.
@@ -91,12 +118,31 @@ export function applyOneGateContainerConfig(
     NODE_USE_ENV_PROXY: '1',
     GIT_HTTP_PROXY_AUTHMETHOD: 'basic',
   };
+
+  // The Claude Code SDK requires a valid-format CLAUDE_CODE_OAUTH_TOKEN to pass
+  // its own client login gate before it will call /v1/messages. OneGate replaces
+  // the real upstream credential at the edge, so this token is only the local
+  // gate key. In OneCLI mode the OneCLI SDK injects this for us; on the OneGate
+  // path we must supply it ourselves or the SDK stalls at GET /v1/models.
+  const gate = resolveClaudeGateToken();
+  let gateSource = 'none';
+  if (gate) {
+    env['CLAUDE_CODE_OAUTH_TOKEN'] = gate.token;
+    gateSource = gate.source;
+  }
+
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
 
+  if (!gate) {
+    log.warn('OneGate mode: no CLAUDE_CODE_OAUTH_TOKEN found — SDK may not reach the model', {
+      containerName: opts.containerName,
+    });
+  }
   log.info('OneGate proxy env applied', {
     containerName: opts.containerName,
     agent: opts.agent,
     port,
+    gateSource,
   });
 }
 
