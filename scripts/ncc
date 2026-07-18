@@ -23,7 +23,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # ── Locate the NanoClaw checkout ────────────────────────────────────────────
 # Installed layout mirrors /claw: the real file lives at <repo>/scripts/ncc and
@@ -422,8 +422,9 @@ def cmd_health(args):
         else:
             h.add("OK", f"container {cn} ({up})")
         # LLM connection — the agent is useless if it can't reach the model,
-        # even when the container looks perfectly alive. Proxy-agnostic probe.
-        if not getattr(args, "no_llm", False):
+        # even when the container looks perfectly alive. Proxy-agnostic probe,
+        # opt-in (--llm) because it makes a real completion each run.
+        if getattr(args, "llm", False):
             ok, detail = _llm_probe(cn)
             if ok:
                 h.add("OK", f"container {cn} LLM connection")
@@ -486,9 +487,9 @@ def build_parser():
 
     ph = sub.add_parser("health", help="scan every component; exit 2 on hard FAIL")
     ph.add_argument("--json", action="store_true", help="machine-readable output")
-    ph.add_argument("--no-llm", action="store_true",
-                    help="skip the LLM connection probe (it makes one minimal "
-                         "completion per running container — omit for high-frequency polling)")
+    ph.add_argument("--llm", action="store_true",
+                    help="also probe the LLM connection (one minimal completion per "
+                         "running container; off by default so routine/frequent scans stay cheap)")
     ph.set_defaults(func=cmd_health)
 
     pt = sub.add_parser("tasks", help="running containers + pending ad-hoc/one-off tasks")
