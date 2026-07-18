@@ -33,6 +33,7 @@ import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
+import { readProxyMode, applyOneGateContainerConfig, applyDirectContainerConfig } from './onegate-proxy.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
 // Provider host-side config barrel — each provider that needs host-side
 // container setup self-registers on import.
@@ -475,23 +476,36 @@ async function buildContainerArgs(
     }
   }
 
-  // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
-  // are routed through the agent vault for credential injection, and mounts
-  // any credential stubs the gateway serves (e.g. a sentinel auth file).
+  // Proxy gateway — injects HTTPS_PROXY + certs so container API calls are
+  // routed for credential injection, and mounts any credential stubs the
+  // gateway serves (e.g. a sentinel auth file). The mode is read fresh from
+  // ~/.nanoclaw-onegate/mode on EVERY spawn, so switching needs no rebuild.
+  // See nanoclaw-proxy.sh (deterministic, LLM-free toggle).
+  //   onegate -> fleet OneGate via local SSH tunnel
+  //   direct  -> NO proxy (last resort if both gateways are off)
+  //   onecli  -> hosted OneCLI (default, byte-for-byte today's behavior)
   // Runs AFTER the volume mounts so a stub nested inside one of our mounts
   // (a parent dir mounted RW above it) lands later in the args and isn't
   // shadowed by it. Treated as a transient hard failure: if we can't wire
   // the gateway, we don't spawn. The caller (router or host-sweep) catches
   // the throw, leaves the inbound message pending, and the next sweep tick
   // retries.
-  if (agentIdentifier) {
-    await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+  const proxyMode = readProxyMode();
+  if (proxyMode === 'onegate') {
+    applyOneGateContainerConfig(args, { agent: agentIdentifier, containerName });
+    log.info('OneGate gateway applied', { containerName });
+  } else if (proxyMode === 'direct') {
+    applyDirectContainerConfig(args, { containerName });
+  } else {
+    if (agentIdentifier) {
+      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
+    }
+    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
+    if (!onecliApplied) {
+      throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
+    }
+    log.info('OneCLI gateway applied', { containerName });
   }
-  const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-  if (!onecliApplied) {
-    throw new Error('OneCLI gateway not applied — refusing to spawn container without credentials');
-  }
-  log.info('OneCLI gateway applied', { containerName });
 
   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
   args.push('--entrypoint', 'bash');

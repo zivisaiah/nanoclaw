@@ -47,3 +47,13 @@ AGENTS.md
 docs/maintainer-guide.md
 docs/drafts/
 forks.md
+
+# OneGate switch: encrypted key material must never be committed.
+# (data/, logs/, groups/*, .env and *.keys.json are already covered above.)
+onegate-db-key.txt.enc
+onegate-rootCA.key.enc
+onegate-rootCA.key
+onegate-db-key.txt
+*.key.enc
+*.pem.key
+*.env.local
