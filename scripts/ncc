@@ -23,7 +23,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # ── Locate the NanoClaw checkout ────────────────────────────────────────────
 # Installed layout mirrors /claw: the real file lives at <repo>/scripts/ncc and
@@ -327,9 +327,50 @@ def _tail(path, max_bytes=200_000):
         return ""
 
 
+def _llm_probe(container, timeout=45):
+    """Test the agent's LLM connection, proxy-agnostically.
+
+    Runs one minimal completion through the agent's OWN client, inside the
+    container, using whatever egress + credential + model the agent is already
+    configured with. ncc stays ignorant of how egress is wired (OneCLI,
+    OneGate, a direct key, or none) — it only asks the question that actually
+    matters: from where the agent lives, can it get a completion right now?
+
+    Returns (ok, detail). ok=True means a completion came back.
+    """
+    # Faithful model: whatever the running agent process was launched with.
+    model = ""
+    rc, out, _ = run(["docker", "exec", container, "sh", "-c",
+                      r"cat /proc/*/cmdline 2>/dev/null | tr '\0' '\n'"])
+    if rc == 0:
+        toks = out.splitlines()
+        for i, t in enumerate(toks):
+            if t == "--model" and i + 1 < len(toks):
+                model = toks[i + 1]
+                break
+    probe = ("timeout %d claude -p 'Reply with exactly: OK' %s "
+             "--permission-mode bypassPermissions 2>&1") % (
+                 timeout - 5, ("--model " + model) if model else "")
+    rc, out, err = run(["docker", "exec", container, "sh", "-c", probe], timeout=timeout)
+    blob = (out + "\n" + err).strip()
+    low = blob.lower()
+    # Classify known failure signatures first — some of these still exit 0.
+    if any(k in low for k in ("rate limit", "rate_limit", "429", "usage limit")):
+        return False, "rate limited — the LLM is refusing calls (429)"
+    if any(k in low for k in ("401", "403", "unauthor", "authentication",
+                              "invalid api key", "credential", "token expired")):
+        return False, "auth error — the credential was rejected by the LLM"
+    if "overloaded" in low or "529" in low:
+        return False, "LLM overloaded (529) — transient upstream"
+    if rc == 0 and blob:
+        return True, None
+    if rc == 124 or not blob:
+        return False, f"no completion within {timeout}s — LLM unreachable or hung"
+    return False, blob.splitlines()[-1][:140]
+
+
 def cmd_health(args):
     h = Health()
-    now = time.time()
 
     # 1. service
     try:
@@ -366,18 +407,7 @@ def cmd_health(args):
     except OSError:
         pass
 
-    # 5. OneCLI gateway
-    rc, out, _ = run(["docker", "ps", "--filter", "name=^onecli$", "--format", "{{.Status}}"])
-    if rc != 0:
-        pass  # docker already reported
-    elif not out:
-        h.add("WARN", "OneCLI gateway", "container not running (agents may 401)")
-    elif "healthy" in out.lower():
-        h.add("OK", f"OneCLI gateway ({out})")
-    else:
-        h.add("WARN", "OneCLI gateway", out)
-
-    # 6. agent containers: thrash + zombies + heartbeat
+    # 5. agent containers: liveness (thrash/zombies/heartbeat) + LLM connection
     rc, out, _ = run(["docker", "ps", "--filter", "name=nanoclaw-v2", "--format", "{{.Names}}"])
     containers = out.splitlines() if (rc == 0 and out) else []
     if not containers:
@@ -391,6 +421,14 @@ def cmd_health(args):
             h.add("FAIL", f"container {cn}", "autocompact THRASHING — send /clear")
         else:
             h.add("OK", f"container {cn} ({up})")
+        # LLM connection — the agent is useless if it can't reach the model,
+        # even when the container looks perfectly alive. Proxy-agnostic probe.
+        if not getattr(args, "no_llm", False):
+            ok, detail = _llm_probe(cn)
+            if ok:
+                h.add("OK", f"container {cn} LLM connection")
+            else:
+                h.add("FAIL", f"container {cn} LLM connection", detail)
         zrc, zout, _ = run(["docker", "exec", cn, "sh", "-c", "ps -eo args 2>/dev/null"])
         if zrc == 0:
             z = sum(1 for l in zout.splitlines() if "defunct" in l)
@@ -405,7 +443,7 @@ def cmd_health(args):
             if r:
                 hbs = glob.glob(os.path.join(REPO, "data", "v2-sessions", r[0][0], "*", ".heartbeat"))
                 if hbs:
-                    age = int(now - os.stat(hbs[0]).st_mtime)
+                    age = max(0, int(time.time() - os.stat(hbs[0]).st_mtime))
                     if age > 180:
                         h.add("WARN", f"container {cn} heartbeat", f"stale {age}s (long turn or wedged)")
                     else:
@@ -448,6 +486,9 @@ def build_parser():
 
     ph = sub.add_parser("health", help="scan every component; exit 2 on hard FAIL")
     ph.add_argument("--json", action="store_true", help="machine-readable output")
+    ph.add_argument("--no-llm", action="store_true",
+                    help="skip the LLM connection probe (it makes one minimal "
+                         "completion per running container — omit for high-frequency polling)")
     ph.set_defaults(func=cmd_health)
 
     pt = sub.add_parser("tasks", help="running containers + pending ad-hoc/one-off tasks")

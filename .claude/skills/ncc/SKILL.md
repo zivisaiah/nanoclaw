@@ -20,11 +20,19 @@ need `ncc health` and `ncc service start`.
 - `ncc service status|start|stop|restart` — manage the host service. Auto-detects
   **launchd** on macOS and **systemd (`--user`)** on Linux; discovers the unit
   itself (no hardcoded names).
-- `ncc health [--json]` — scans the service, Docker daemon, central DB integrity,
-  host disk, the OneCLI gateway, each agent container (autocompact thrashing,
-  zombie processes, heartbeat freshness), recent permanent delivery failures, and
-  overdue scheduled tasks. Prints `OK` / `WARN` / `FAIL`. **Exits 2 on a hard
-  FAIL**, `0` otherwise (WARN is advisory) — safe to wire into monitoring.
+- `ncc health [--json] [--no-llm]` — scans the service, Docker daemon, central DB
+  integrity, host disk, each agent container (autocompact thrashing, zombie
+  processes, heartbeat freshness, **LLM connection**), recent permanent delivery
+  failures, and overdue scheduled tasks. Prints `OK` / `WARN` / `FAIL`. **Exits 2
+  on a hard FAIL**, `0` otherwise (WARN is advisory) — safe to wire into monitoring.
+  - **LLM connection** is the check that catches a container which looks perfectly
+    alive but cannot reach the model (rate limit, auth failure, unreachable
+    gateway). It runs one minimal completion through the agent's own client
+    *inside* the container, so it is proxy-agnostic — it does not care whether
+    egress is wired through OneCLI, a self-hosted gateway, or a direct key; it
+    only asks whether the agent can get a completion right now.
+  - `--no-llm` skips that probe. Use it for high-frequency polling, since the
+    probe makes one small LLM call per running container each run.
 - `ncc tasks [--json]` — running agent containers plus pending ad-hoc/one-off tasks.
 - `ncc crons [--json]` — recurring scheduled tasks (their cron expression and next run).
 - `ncc --version`, `ncc --help`, `ncc <command> --help`.
@@ -85,6 +93,9 @@ ncc service restart
 # Full health scan; exit code 2 signals a hard failure
 ncc health
 ncc health --json
+
+# Skip the LLM probe for fast, frequent polling (no completion is made)
+ncc health --no-llm
 
 # What is scheduled, and what is queued right now?
 ncc crons
