@@ -19,6 +19,7 @@
  */
 import { getChannelAdapter } from './channels/channel-registry.js';
 import { gateCommand } from './command-gate.js';
+import { namespaceMessageIdForAgent } from './message-id.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { recordDroppedMessage } from './db/dropped-messages.js';
 import {
@@ -519,5 +520,5 @@ async function deliverToAgent(
  */
 function messageIdForAgent(baseId: string | undefined, agentGroupId: string): string {
   const id = baseId && baseId.length > 0 ? baseId : generateId();
-  return `${id}:${agentGroupId}`;
+  return namespaceMessageIdForAgent(id, agentGroupId);
 }

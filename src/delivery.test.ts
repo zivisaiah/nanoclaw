@@ -70,6 +70,20 @@ function insertOutbound(agentGroupId: string, sessionId: string, msgId: string):
   db.close();
 }
 
+function insertOutboundContent(
+  agentGroupId: string,
+  sessionId: string,
+  msgId: string,
+  content: unknown,
+): void {
+  const db = new Database(outboundDbPath(agentGroupId, sessionId));
+  db.prepare(
+    `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
+     VALUES (?, datetime('now'), 'chat', 'telegram:123', 'telegram', ?)`,
+  ).run(msgId, JSON.stringify(content));
+  db.close();
+}
+
 beforeEach(() => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
@@ -152,6 +166,54 @@ describe('deliverSessionMessages — concurrent invocations', () => {
     await deliverSessionMessages(session);
 
     expect(callCount).toBe(1);
+  });
+});
+
+describe('deliverSessionMessages — reaction/edit id namespacing', () => {
+  it('strips the agent-group namespace from a reaction target before dispatch', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    // The router stored the inbound id namespaced as `<platformId>:<agentGroupId>`.
+    insertOutboundContent('ag-1', session.id, 'out-react', {
+      operation: 'reaction',
+      messageId: `telegram:123:456:${session.agent_group_id}`,
+      emoji: 'eyes',
+    });
+
+    let seen: Record<string, unknown> | undefined;
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, content) {
+        seen = JSON.parse(content);
+        return 'plat-msg-react';
+      },
+    });
+
+    await deliverSessionMessages(session);
+
+    // Adapter must receive the raw platform message id, not the namespaced one.
+    expect(seen?.messageId).toBe('telegram:123:456');
+  });
+
+  it('passes an already-raw reaction id through unchanged', async () => {
+    seedAgentAndChannel();
+    const { session } = resolveSession('ag-1', 'mg-1', null, 'shared');
+    insertOutboundContent('ag-1', session.id, 'out-react2', {
+      operation: 'reaction',
+      messageId: 'telegram:123:456',
+      emoji: 'eyes',
+    });
+
+    let seen: Record<string, unknown> | undefined;
+    setDeliveryAdapter({
+      async deliver(_channelType, _platformId, _threadId, _kind, content) {
+        seen = JSON.parse(content);
+        return 'plat-msg-react2';
+      },
+    });
+
+    await deliverSessionMessages(session);
+
+    expect(seen?.messageId).toBe('telegram:123:456');
   });
 });
 

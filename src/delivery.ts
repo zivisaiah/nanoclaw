@@ -21,6 +21,7 @@ import {
   migrateDeliveredTable,
 } from './db/session-db.js';
 import { log } from './log.js';
+import { platformMessageIdFromAgentId } from './message-id.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
@@ -367,12 +368,27 @@ async function deliverMessage(
       ? readOutboxFiles(session.agent_group_id, session.id, msg.id, content.files as string[])
       : undefined;
 
+  // Reactions/edits target a message by the agent's session-local id, which the
+  // router namespaced as `<platformMessageId>:<agentGroupId>`. Channel adapters
+  // need the raw platform message id, so strip the namespace before dispatch.
+  // (No-op for ids that were never namespaced, e.g. a delivered outbound id.)
+  let outboundContent = msg.content;
+  if (
+    (content.operation === 'reaction' || content.operation === 'edit') &&
+    typeof content.messageId === 'string'
+  ) {
+    const platformMessageId = platformMessageIdFromAgentId(content.messageId, session.agent_group_id);
+    if (platformMessageId !== content.messageId) {
+      outboundContent = JSON.stringify({ ...content, messageId: platformMessageId });
+    }
+  }
+
   const platformMsgId = await deliveryAdapter.deliver(
     msg.channel_type,
     msg.platform_id,
     msg.thread_id,
     msg.kind,
-    msg.content,
+    outboundContent,
     files,
     deliverInstance,
   );
