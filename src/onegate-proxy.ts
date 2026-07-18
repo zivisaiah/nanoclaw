@@ -28,6 +28,13 @@ const DIRECT_ENV_FILE = path.join(CFG_DIR, 'direct.env');
 const CA_HOST_PATH = path.join(CFG_DIR, 'rootCA.pem');
 const CA_CONTAINER_PATH = '/etc/onegate/rootCA.pem';
 
+// Format-valid but deliberately-fake Claude Code OAuth token. OneGate rewrites
+// the real upstream Authorization header at the edge, so the client only needs
+// a token that satisfies the SDK's local presence/format check — a real secret
+// must never sit in the container env. Same principle OneCLI uses. 108 chars to
+// match the real token length.
+const PLACEHOLDER_GATE_TOKEN = 'sk-ant-oat01-onegate-placeholder-'.padEnd(108, '0');
+
 export type ProxyMode = 'onecli' | 'onegate' | 'direct';
 
 /** Fail-safe: any error or unrecognized value -> 'onecli' (the known-good path). */
@@ -62,12 +69,13 @@ function readConfigPort(): string {
  * login check and actually issue POST /v1/messages. Without it the SDK stops at
  * a GET /v1/models probe and never calls the model (the exact failure we hit).
  *
- * Priority: an explicit gate-token file in the config dir (set once at setup,
- * mirrors how the agent token is provisioned), then host env, then the Mac's
- * Claude Code credential store. Returns undefined (never throws) if none is
- * present; the caller decides what to do. Value is never logged.
+ * Default is the built-in PLACEHOLDER — no real secret in the container. An
+ * explicit override is honored only if you deliberately drop a real token at
+ * ~/.nanoclaw-onegate/gate-token or set CLAUDE_CODE_OAUTH_TOKEN in the host env
+ * (escape hatch; not used in normal operation). Never returns undefined, so the
+ * SDK gate is always satisfied. Value is never logged.
  */
-function resolveClaudeGateToken(): { token: string; source: string } | undefined {
+function resolveClaudeGateToken(): { token: string; source: string } {
   try {
     const fileTok = fs.readFileSync(GATE_TOKEN_FILE, 'utf8').trim();
     if (fileTok) return { token: fileTok, source: 'gate-token-file' };
@@ -76,15 +84,7 @@ function resolveClaudeGateToken(): { token: string; source: string } | undefined
   }
   const envTok = process.env['CLAUDE_CODE_OAUTH_TOKEN'];
   if (envTok && envTok.trim()) return { token: envTok.trim(), source: 'host-env' };
-  try {
-    const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
-    const j = JSON.parse(fs.readFileSync(credPath, 'utf8'));
-    const tok: string | undefined = j?.claudeAiOauth?.accessToken;
-    if (tok && tok.trim()) return { token: tok.trim(), source: 'claude-credentials' };
-  } catch {
-    /* no credential store — fall through */
-  }
-  return undefined;
+  return { token: PLACEHOLDER_GATE_TOKEN, source: 'placeholder' };
 }
 
 /**
@@ -133,24 +133,15 @@ export function applyOneGateContainerConfig(
   // gate key. In OneCLI mode the OneCLI SDK injects this for us; on the OneGate
   // path we must supply it ourselves or the SDK stalls at GET /v1/models.
   const gate = resolveClaudeGateToken();
-  let gateSource = 'none';
-  if (gate) {
-    env['CLAUDE_CODE_OAUTH_TOKEN'] = gate.token;
-    gateSource = gate.source;
-  }
+  env['CLAUDE_CODE_OAUTH_TOKEN'] = gate.token;
 
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
 
-  if (!gate) {
-    log.warn('OneGate mode: no CLAUDE_CODE_OAUTH_TOKEN found — SDK may not reach the model', {
-      containerName: opts.containerName,
-    });
-  }
   log.info('OneGate proxy env applied', {
     containerName: opts.containerName,
     agent: opts.agent,
     port,
-    gateSource,
+    gateSource: gate.source,
   });
 }
 
