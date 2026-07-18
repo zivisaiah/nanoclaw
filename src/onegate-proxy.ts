@@ -23,6 +23,7 @@ const CFG_DIR = path.join(os.homedir(), '.nanoclaw-onegate');
 const MODE_FILE = path.join(CFG_DIR, 'mode');
 const TOKEN_FILE = path.join(CFG_DIR, 'agent-token');
 const CONFIG_FILE = path.join(CFG_DIR, 'config.env');
+const GATE_TOKEN_FILE = path.join(CFG_DIR, 'gate-token');
 const DIRECT_ENV_FILE = path.join(CFG_DIR, 'direct.env');
 const CA_HOST_PATH = path.join(CFG_DIR, 'rootCA.pem');
 const CA_CONTAINER_PATH = '/etc/onegate/rootCA.pem';
@@ -61,11 +62,18 @@ function readConfigPort(): string {
  * login check and actually issue POST /v1/messages. Without it the SDK stops at
  * a GET /v1/models probe and never calls the model (the exact failure we hit).
  *
- * Sourced the same way direct mode resolves credentials: host env first, then
- * the Mac's Claude Code credential store. Returns undefined (never throws) if
- * neither is present; the caller decides what to do. Value is never logged.
+ * Priority: an explicit gate-token file in the config dir (set once at setup,
+ * mirrors how the agent token is provisioned), then host env, then the Mac's
+ * Claude Code credential store. Returns undefined (never throws) if none is
+ * present; the caller decides what to do. Value is never logged.
  */
 function resolveClaudeGateToken(): { token: string; source: string } | undefined {
+  try {
+    const fileTok = fs.readFileSync(GATE_TOKEN_FILE, 'utf8').trim();
+    if (fileTok) return { token: fileTok, source: 'gate-token-file' };
+  } catch {
+    /* no gate-token file — fall through */
+  }
   const envTok = process.env['CLAUDE_CODE_OAUTH_TOKEN'];
   if (envTok && envTok.trim()) return { token: envTok.trim(), source: 'host-env' };
   try {
