@@ -24,9 +24,7 @@ describe('message-id namespacing', () => {
 
   it('does not strip a different agent group id that appears mid-string', () => {
     const other = 'ag-9999999999999-zzzzzz';
-    expect(platformMessageIdFromAgentId(`1335216264:2359:${other}`, ag)).toBe(
-      `1335216264:2359:${other}`,
-    );
+    expect(platformMessageIdFromAgentId(`1335216264:2359:${other}`, ag)).toBe(`1335216264:2359:${other}`);
   });
 
   it('only strips the exact trailing suffix, not a partial match', () => {

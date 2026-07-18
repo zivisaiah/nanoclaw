@@ -373,10 +373,7 @@ async function deliverMessage(
   // need the raw platform message id, so strip the namespace before dispatch.
   // (No-op for ids that were never namespaced, e.g. a delivered outbound id.)
   let outboundContent = msg.content;
-  if (
-    (content.operation === 'reaction' || content.operation === 'edit') &&
-    typeof content.messageId === 'string'
-  ) {
+  if ((content.operation === 'reaction' || content.operation === 'edit') && typeof content.messageId === 'string') {
     const platformMessageId = platformMessageIdFromAgentId(content.messageId, session.agent_group_id);
     if (platformMessageId !== content.messageId) {
       outboundContent = JSON.stringify({ ...content, messageId: platformMessageId });

@@ -70,12 +70,7 @@ function insertOutbound(agentGroupId: string, sessionId: string, msgId: string):
   db.close();
 }
 
-function insertOutboundContent(
-  agentGroupId: string,
-  sessionId: string,
-  msgId: string,
-  content: unknown,
-): void {
+function insertOutboundContent(agentGroupId: string, sessionId: string, msgId: string, content: unknown): void {
   const db = new Database(outboundDbPath(agentGroupId, sessionId));
   db.prepare(
     `INSERT INTO messages_out (id, timestamp, kind, platform_id, channel_type, content)
