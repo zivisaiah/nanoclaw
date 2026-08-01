@@ -17,6 +17,38 @@ If you are a fresh install (you ran `git clone`, not `git pull`) and there are n
 
 Personal Claude assistant. See [README.md](README.md) for philosophy and setup. Architecture lives in `docs/`.
 
+## ⚠️ Fork divergences — read before resolving any upstream merge conflict
+
+This fork intentionally differs from upstream `nanocoai/nanoclaw` in the files below.
+A `git pull`/`git merge` from upstream **will** conflict in them. Resolving with
+"take theirs" compiles cleanly and passes every test while silently deleting the
+feature — no gate catches it. Keep our side and re-integrate theirs on top.
+
+| File | Ours | Upstream | On conflict |
+|------|------|----------|-------------|
+| `src/container-runner.ts` | 3-way proxy switch (`readProxyMode()` → `onegate` / `direct` / `onecli`) | plain `onecli.applyContainerConfig` | Keep the switch. Upstream's OneCLI path is our `else` branch — fold any upstream change into it. |
+| `src/channels/chat-sdk-bridge.ts` | `adapter.addReaction` wrapped best-effort | bare `await adapter.addReaction` | Keep the try/catch. Without it a rejected emoji burns 3 delivery retries and marks the row permanently failed. |
+
+Two ordering constraints in `container-runner.ts` are load-bearing and easy to
+undo by accident:
+
+- The proxy block must stay **after the volume mounts** — a credential stub nested
+  inside one of our mounts has to land later in the args or the parent mount
+  shadows it.
+- `hostGatewayArgs()` must be called **exactly once**, in the `else` branch of the
+  egress-lockdown check. Adding a second unconditional call double-pushes the flag
+  when lockdown is off and defeats lockdown when it is on.
+
+Also fork-only, but **not** at risk from upstream merges (nothing upstream touches
+them): `src/onegate-proxy.ts`, `src/message-id.ts`, `onegate-switch/`,
+`scripts/ncc`, `.claude/skills/ncc/`.
+
+`src/channels/telegram*.ts` are byte-identical to the `channels` branch — the
+`/add-telegram` skill overwrites them via `git show origin/channels:<path> > <path>`,
+which is currently a no-op. If you ever customize them, move the changes into a
+separate module that `telegram.ts` imports, since the skill's overwrite is
+unconditional.
+
 ## Quick Context
 
 The host is a single Node process that orchestrates per-session agent containers. Platform messages land via channel adapters, route through an entity model (users → messaging groups → agent groups → sessions), get written into the session's inbound DB, and wake a container. The agent-runner inside the container polls the DB, calls Claude, and writes back to the outbound DB. The host polls the outbound DB and delivers through the same adapter.
