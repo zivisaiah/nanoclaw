@@ -21,8 +21,15 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 This fork intentionally differs from upstream `nanocoai/nanoclaw` in the files below.
 A `git pull`/`git merge` from upstream **will** conflict in them. Resolving with
-"take theirs" compiles cleanly and passes every test while silently deleting the
-feature — no gate catches it. Keep our side and re-integrate theirs on top.
+"take theirs" compiles cleanly and typechecks while silently deleting the feature.
+Keep our side and re-integrate theirs on top.
+
+`src/fork-divergences.test.ts` guards these — if you are reading this because that
+suite is failing, a merge dropped one of the divergences below; restore it rather
+than editing the test. That file has no upstream counterpart, so a merge never
+conflicts there and it survives to fail. Don't fold its cases into the neighbouring
+test files: `chat-sdk-bridge.test.ts` diverges ~385 lines from upstream, so the same
+careless resolution would delete guard and test together.
 
 | File | Ours | Upstream | On conflict |
 |------|------|----------|-------------|
