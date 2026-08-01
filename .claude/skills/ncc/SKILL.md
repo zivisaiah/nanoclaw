@@ -22,18 +22,25 @@ need `ncc health` and `ncc service start`.
   itself (no hardcoded names).
 - `ncc health [--json] [--llm]` — scans the service, Docker daemon, central DB
   integrity, host disk, each agent container (autocompact thrashing, zombie
-  processes, heartbeat freshness), recent permanent delivery failures, and overdue
-  scheduled tasks. Prints `OK` / `WARN` / `FAIL`. **Exits 2 on a hard FAIL**, `0`
-  otherwise (WARN is advisory) — safe to wire into monitoring.
-  - `--llm` adds an **LLM connection** check per running container — the one that
-    catches a container which looks perfectly alive but cannot reach the model
-    (rate limit, auth failure, unreachable gateway). It runs one minimal completion
-    through the agent's own client *inside* the container, so it is proxy-agnostic:
-    it does not care whether egress is wired through OneCLI, a self-hosted gateway,
-    or a direct key; it only asks whether the agent can get a completion right now.
-  - It is **off by default** because it makes a real completion per running
-    container each run — keep routine and high-frequency scans cheap, and add
-    `--llm` when you specifically want to verify model reachability.
+  processes, heartbeat freshness, **LLM log scan**), recent permanent delivery
+  failures, and overdue scheduled tasks. Prints `OK` / `WARN` / `FAIL`. **Exits 2
+  on a hard FAIL**, `0` otherwise (WARN is advisory) — safe to wire into monitoring.
+  - **LLM health has two tiers**, both aimed at catching a container that looks
+    perfectly alive but cannot reach the model (rate limit, auth failure,
+    unreachable gateway):
+    - **LLM log scan** — default, every provider, zero cost. Scans each running
+      container's runner logs over the last heartbeat window (~180s, the same
+      threshold as the heartbeat-freshness check, so the window always spans at
+      least one live poll cycle) for LLM error lines: a thrown `Query error:`, or
+      a non-retryable provider event such as a `Rate limit`/quota 429. It matches
+      the runner's own structured log lines, so the agent merely *mentioning*
+      "429" in a reply never trips it. Reports `WARN` when errors are found.
+    - **`--llm` active probe** — opt-in, Claude-provider only. Additionally makes
+      one minimal completion through the agent's own client *inside* the container:
+      proxy-agnostic (OneCLI, a self-hosted gateway, or a direct key all work) and
+      `FAIL`-capable, so it is the definitive current-state check. Off by default
+      because it makes a real call each run. Containers on another provider
+      (OpenCode, Ollama, ...) report `skipped`.
 - `ncc tasks [--json]` — running agent containers plus pending ad-hoc/one-off tasks.
 - `ncc crons [--json]` — recurring scheduled tasks (their cron expression and next run).
 - `ncc --version`, `ncc --help`, `ncc <command> --help`.
