@@ -92,10 +92,7 @@ function resolveClaudeGateToken(): { token: string; source: string } {
  * missing so we never silently spawn without credentials (parity with the
  * OneCLI path's hard-fail). The agent token is never logged.
  */
-export function applyOneGateContainerConfig(
-  args: string[],
-  opts: { agent?: string; containerName: string },
-): void {
+export function applyOneGateContainerConfig(args: string[], opts: { agent?: string; containerName: string }): void {
   const token = fs.readFileSync(TOKEN_FILE, 'utf8').trim();
   if (!token) throw new Error('OneGate agent token empty — refusing to spawn');
   if (!fs.existsSync(CA_HOST_PATH)) {
@@ -161,10 +158,7 @@ export function applyOneGateContainerConfig(
  * has no LLM credential until one is provided. Secret VALUES are never logged,
  * only which source each key came from.
  */
-export function applyDirectContainerConfig(
-  args: string[],
-  opts: { containerName: string },
-): void {
+export function applyDirectContainerConfig(args: string[], opts: { containerName: string }): void {
   const injected: Record<string, string> = {};
   const sources: Record<string, string> = {};
 
