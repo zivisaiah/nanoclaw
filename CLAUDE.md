@@ -79,6 +79,8 @@ For ad-hoc queries from skills or scripts, use the in-tree wrapper rather than t
 | `src/channels/` | Channel adapter infra (registry, Chat SDK bridge); specific channel adapters are skill-installed from the `channels` branch |
 | `src/providers/` | Host-side provider container-config (`claude` baked in; `opencode` etc. installed from the `providers` branch) |
 | `container/agent-runner/src/` | Agent-runner: poll loop, formatter, provider abstraction, MCP tools, destinations |
+| `container/CLAUDE.md` | **Not developer guidance** — this is the agent's runtime system prompt, shipped into every container. Edit only when changing agent behavior. |
+| `AGENTS.md` | Symlink to this file. Editing either edits both. |
 | `container/skills/` | Container skills mounted into every agent session (`agent-browser`, `frontend-engineer`, `onecli-gateway`, `self-customize`, `slack-formatting`, `vercel-cli`, `welcome`, `whatsapp-formatting`) |
 | `groups/<folder>/` | Per-agent-group filesystem (CLAUDE.md, skills) — agent-runner source is a shared read-only mount, not copied per group |
 | `scripts/init-first-agent.ts` | Bootstrap the first DM-wired agent (used by `/init-first-agent` skill) |
@@ -195,6 +197,8 @@ Four types of skills. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full taxono
 | `/init-onecli` | Install OneCLI Agent Vault and migrate `.env` credentials |
 | `/migrate-memory` | Carry a group's agent memory across a provider switch (operator-run, both directions) |
 
+This table is a shortlist of the most-used skills. `.claude/skills/` holds the full installed set (44 as of this writing, mostly `/add-<channel>` and `/add-<tool>` installers).
+
 ## Contributing
 
 Before creating a PR, adding a skill, or preparing any contribution, you MUST read [CONTRIBUTING.md](CONTRIBUTING.md). It covers accepted change types, the four skill types and their guidelines, `SKILL.md` format rules, and the pre-submission checklist.
@@ -215,18 +219,56 @@ Show the output and wait for approval. Installation-specific files (group files,
 Run commands directly — don't tell the user to run them.
 
 ```bash
-# Host (Node + pnpm)
-pnpm run dev          # Host with hot reload
-pnpm run build        # Compile host TypeScript (src/)
-./container/build.sh  # Rebuild agent container image (nanoclaw-agent:latest)
-pnpm test             # Host tests (vitest)
+# Host (Node 22 per .nvmrc, pnpm)
+pnpm run dev            # Host with hot reload (tsx src/index.ts)
+pnpm run build          # Compile host TypeScript (src/)
+pnpm run typecheck      # tsc --noEmit
+pnpm run lint           # eslint src/  (lint:fix to autofix)
+pnpm run format:check   # prettier --check  (format:fix to write)
+pnpm test               # Host tests (vitest run)
+./container/build.sh    # Rebuild agent container image (nanoclaw-agent:latest)
+
+# Single test / subsets
+pnpm exec vitest run src/command-gate.test.ts      # one file
+pnpm exec vitest run -t "<test name substring>"    # one test by name
+pnpm exec vitest run -c vitest.skills.config.ts    # skill tests, if any (see note below)
 
 # Agent-runner (Bun — separate package tree under container/agent-runner/)
 cd container/agent-runner && bun install   # After editing agent-runner deps
 cd container/agent-runner && bun test      # Container tests (bun:test)
+cd container/agent-runner && bun test src/formatter.test.ts   # single container test
 ```
 
 Container typecheck is a separate tsconfig — if you edit `container/agent-runner/src/`, run `pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit` from root (or `bun run typecheck` from `container/agent-runner/`).
+
+`vitest.config.ts` covers `src/`, `setup/`, `scripts/`, and top-level `container/*.test.ts` only — `container/agent-runner/` tests are deliberately excluded because they need `bun:sqlite`.
+
+`vitest.skills.config.ts` is a separate config for `.claude/skills/**/tests/*.test.ts`. It is not wired to any `package.json` script and matches nothing in a stock install — "no test files found" is expected unless an installed skill ships tests.
+
+### CI gates
+
+`.github/workflows/ci.yml` runs exactly these on every PR (Node 20, Bun pinned to 1.3.12):
+
+```bash
+pnpm run format:check
+pnpm exec tsc --noEmit
+pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
+pnpm exec vitest run
+cd container/agent-runner && bun test
+```
+
+**ESLint is not in CI** — run `pnpm run lint` yourself; nothing else will catch drift.
+
+### Lint and formatting conventions
+
+`eslint.config.js` enforces two rules that shape error handling here:
+
+- **`no-catch-all/no-catch-all`** (warn) — don't swallow errors in a bare catch. Catch the specific failure or let it propagate.
+- **`preserve-caught-error`** with `requireCatchParameter: true` (error) — a catch must bind the error, and rethrowing must preserve it (`{ cause }`), never discard it.
+
+Unused identifiers are errors unless prefixed `_` (args, caught errors, destructured array elements, vars). `@typescript-eslint/no-explicit-any` is a warning, not an error.
+
+A `.husky/pre-commit` hook runs `pnpm run format:fix` and re-stages `src/**/*.ts`. If a commit reformats files you didn't touch, that's the hook, not a bug.
 
 Service management:
 ```bash
@@ -281,6 +323,15 @@ This project uses pnpm with `minimumReleaseAge: 4320` (3 days) in `pnpm-workspac
 | [docs/skills-model.md](docs/skills-model.md) | The skills model in full: recipes, tests, upgrades, migrations |
 | [docs/skill-guidelines.md](docs/skill-guidelines.md) | Authoritative checklist for writing a skill |
 | [docs/templates.md](docs/templates.md) | Agent templates: what they are, stamping via `ncl groups create --template` + the setup wizard, the OneCLI/MCP-credential model, supported providers, and how to contribute one |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security model — isolation boundaries, threat model |
+| [docs/setup-flow.md](docs/setup-flow.md) | Step-by-step walkthrough of the setup pipeline |
+| [docs/upgrade-recovery.md](docs/upgrade-recovery.md) | Recovering an install from a failed upgrade |
+| [docs/onecli-upgrades.md](docs/onecli-upgrades.md) | Upgrading the OneCLI gateway dependency |
+| [docs/BRANCH-FORK-MAINTENANCE.md](docs/BRANCH-FORK-MAINTENANCE.md) | Maintaining the `channels` / `providers` sibling branches |
+| [docs/ollama.md](docs/ollama.md) | Running a group against a local Ollama model |
+| [docs/SPEC.md](docs/SPEC.md), [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md), [docs/SDK_DEEP_DIVE.md](docs/SDK_DEEP_DIVE.md) | Original design documents |
+
+`docs/README.md` notes that the canonical user-facing documentation is at [docs.nanoclaw.dev](https://docs.nanoclaw.dev); the files in `docs/` are design documents and developer references.
 
 ## Container Build Cache
 
@@ -297,7 +348,7 @@ The agent container runs on **Bun**; the host runs on **Node** (pnpm). They comm
 - **Writing a new named-param SQL insert/update in the container** → use `$name` in both SQL and JS keys: `.run({ $id: msg.id })`. `bun:sqlite` does not auto-strip the prefix the way `better-sqlite3` does on the host. Positional `?` params work normally.
 - **Adding a test in `container/agent-runner/src/`** → import from `bun:test`, not `vitest`. Vitest runs on Node and can't load `bun:sqlite`. `vitest.config.ts` excludes this tree.
 - **Adding a Node CLI the agent invokes at runtime** (like `agent-browser`, `claude-code`, `vercel`) → put it in the Dockerfile's pnpm global-install block, pinned to an exact version via a new `ARG`. Don't use `bun install -g` — that bypasses the pnpm supply-chain policy.
-- **Changing the Dockerfile entrypoint or the dynamic-spawn command** (`src/container-runner.ts` line ~301) → keep `exec bun ...` so signals forward cleanly. The image has no `/app/dist`; don't reintroduce a tsc build step.
+- **Changing the Dockerfile entrypoint or the dynamic-spawn command** (the `exec bun run /app/src/index.ts` arg in `src/container-runner.ts`) → keep `exec bun ...` so signals forward cleanly. The image has no `/app/dist`; don't reintroduce a tsc build step.
 - **Changing session-DB pragmas** (`container/agent-runner/src/db/connection.ts`) → `journal_mode=DELETE` is load-bearing for cross-mount visibility. Read the comment block at the top of the file first.
 
 ## CJK font support

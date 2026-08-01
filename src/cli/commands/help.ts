@@ -5,7 +5,7 @@
  *   ncl groups help         — show group resource details (verbs, columns, enums)
  */
 import { getContainerConfig } from '../../db/container-configs.js';
-import { getResource, getResources } from '../crud.js';
+import { getResources } from '../crud.js';
 import type { CallerContext } from '../frame.js';
 import { listCommands, register } from '../registry.js';
 
